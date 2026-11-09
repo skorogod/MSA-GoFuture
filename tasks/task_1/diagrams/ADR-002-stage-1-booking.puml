@@ -1,0 +1,49 @@
+@startuml GoFuture_ADR_002_Stage_1
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+LAYOUT_WITH_LEGEND()
+skinparam backgroundColor white
+title GoFuture — этап 1: выделение Booking (C4, уровень C2)
+
+Person(passenger, "Пассажир", "Заказывает поездки")
+Person(driver, "Водитель", "Принимает заказы и выполняет поездки")
+Person(partner, "Партнёр / разработчик", "Использует партнёрский API")
+
+System_Boundary(platform, "GoFuture Platform") {
+    Container(passenger_app, "Приложение пассажира", "iOS / Android / Huawei", "Заказ и отслеживание поездок")
+    Container(driver_app, "Приложение водителя", "iOS / Android / Huawei", "Работа с заказами и поездками")
+    Container(api, "API Gateway", "Kong", "Маршрутизация; флаг переключает запросы Booking")
+
+    Container(booking, "Booking Service", "Python / Django", "Бронирования и процесс поездки")
+    ContainerDb(booking_db, "Данные Booking", "PostgreSQL", "Бронирования и поездки")
+    Container(acl, "ACL", "Anti-Corruption Layer", "Адаптация контрактов и вызовов к монолиту")
+
+    Container_Boundary(monolith, "Django-монолит") {
+        Container(legacy_booking, "Legacy Booking", "Django App", "Прежняя реализация; маршрут для отката")
+        Container(domains, "Домены монолита", "Django Apps", "Driver, Pricing, Payments, Geography, Fraud, Notification")
+        Container(other, "Прочие функции", "Django Apps", "Payouts, Analytics и другие неперенесённые функции")
+    }
+    ContainerDb(legacy_db, "Общая БД монолита", "PostgreSQL", "Данные legacy-доменов")
+}
+
+Rel(passenger, passenger_app, "Использует")
+Rel(driver, driver_app, "Использует")
+Rel(partner, api, "Использует партнёрский API")
+Rel(passenger_app, api, "Запросы", "HTTPS")
+Rel(driver_app, api, "Запросы", "HTTPS")
+Rel(api, booking, "Booking: новая реализация")
+Rel(api, legacy_booking, "Booking: legacy / откат")
+Rel(api, other, "Неперенесённые API")
+Rel(booking, booking_db, "Данные Booking")
+Rel(booking, acl, "Вызывает оставшиеся домены")
+Rel(acl, domains, "Адаптирует вызовы к legacy API")
+Rel(legacy_booking, domains, "Существующие вызовы")
+Rel(legacy_booking, legacy_db, "Данные legacy Booking")
+Rel(domains, legacy_db, "Данные доменов")
+Rel(other, legacy_db, "Данные доменов")
+
+note bottom of platform
+  Показаны альтернативные маршруты, а не одновременная обработка запроса.
+  Владение данными и миграция определяются отдельно; откат требует совместимости данных.
+end note
+@enduml
