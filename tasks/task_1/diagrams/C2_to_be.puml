@@ -1,0 +1,122 @@
+@startuml GoFuture_C2_To_Be
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+LAYOUT_WITH_LEGEND()
+title GoFuture — целевая архитектура (C4, уровень C2)
+
+Person(passenger, "Пассажир", "Заказывает поездки")
+Person(driver, "Водитель", "Принимает заказы и получает выплаты")
+Person(manager, "Корпоративный менеджер", "Управляет заказами")
+Person(accountant, "Бухгалтер", "Контролирует выплаты")
+Person(partner, "Партнёр / разработчик", "Использует партнёрский API")
+Person(sre, "SRE-инженер", "Поддерживает надёжность платформы")
+
+System_Boundary(platform, "GoFuture Platform") {
+    Container(passenger_app, "Приложение пассажира", "iOS / Android / Huawei", "Заказ и отслеживание поездок")
+    Container(driver_app, "Приложение водителя", "iOS / Android / Huawei", "Работа с заказами и поездками")
+    Container(portal, "Корпоративный портал", "Web", "Управление корпоративными заказами")
+    Container(admin, "Админ-панель", "Web", "Управление и контроль операций")
+    Container(api, "API Gateway", "Kong", "Маршрутизация клиентских и партнёрских запросов")
+
+    Container(booking, "Booking Service", "Python / Django", "Бронирования и процесс поездки")
+    Container(driver_svc, "Driver Service", "Python / Django", "Данные и состояние водителей")
+    Container(pricing, "Pricing Service", "Python / Django", "Расчёт стоимости и ценовые правила")
+    Container(payments, "Payments Service", "Python / Django", "Платежи пассажиров")
+    Container(payouts, "Payouts Service", "Python / Django", "Выплаты водителям")
+    Container(notification, "Notification Service", "Python / Django", "Управление уведомлениями")
+    Container(geography, "Geography Service", "Python / Django", "Геопоиск и маршруты")
+    Container(fraud, "Fraud Service", "Python / Django", "Проверки на мошенничество")
+    Container(analytics, "Analytics Service", "Python / Django", "Приём и подготовка аналитических данных")
+
+    ContainerDb(booking_db, "Данные Booking", "PostgreSQL", "Бронирования и поездки")
+    ContainerDb(driver_db, "Данные Driver", "PostgreSQL", "Данные водителей")
+    ContainerDb(pricing_db, "Данные Pricing", "PostgreSQL", "Ценовые правила")
+    ContainerDb(payments_db, "Данные Payments", "PostgreSQL", "Платёжные операции")
+    ContainerDb(payouts_db, "Данные Payouts", "PostgreSQL", "Выплаты")
+    ContainerDb(notification_db, "Данные Notification", "PostgreSQL", "Данные уведомлений и устройств")
+    ContainerDb(geography_db, "Данные Geography", "PostgreSQL / Elasticsearch / Redis", "Геоданные, поисковый индекс и кеш")
+    ContainerDb(fraud_db, "Данные Fraud", "PostgreSQL", "Данные проверок мошенничества")
+    ContainerQueue(broker, "Брокер сообщений", "RabbitMQ / AMQP", "Асинхронные события и задачи")
+
+    Container(analytics_engine, "Analytics Engine", "Spark / Flink", "Обработка аналитических данных")
+    ContainerDb(analytics_db, "Аналитическое хранилище", "ClickHouse", "Данные для аналитики")
+    Container(datalens, "DataLens", "BI", "Отчёты и визуализация")
+    Container(observability, "Наблюдаемость", "Prometheus / Grafana / Loki / Alertmanager", "Метрики, логи и алерты критических процессов")
+}
+
+System_Ext(pay_provider, "Платёжные провайдеры", "Яндекс Пэй и локальные платёжные сервисы")
+System_Ext(maps_provider, "Картографические провайдеры", "Яндекс Карты и локальные картографические сервисы")
+System_Ext(push_provider, "Push-провайдеры", "FCM, APNs и Huawei Push Kit")
+System_Ext(bank, "Банковские API", "Выплаты водителям")
+
+Rel(passenger, passenger_app, "Использует")
+Rel(driver, driver_app, "Использует")
+Rel(manager, portal, "Использует")
+Rel(accountant, admin, "Использует")
+Rel(partner, api, "Использует партнёрский API")
+Rel(sre, observability, "Наблюдает за платформой и реагирует на инциденты")
+
+Rel(passenger_app, api, "Запросы", "HTTPS")
+Rel(driver_app, api, "Запросы", "HTTPS")
+Rel(portal, api, "Запросы", "HTTPS")
+Rel(admin, api, "Запросы", "HTTPS")
+Rel(api, booking, "Маршрутизирует запросы бронирований")
+Rel(api, driver_svc, "Маршрутизирует запросы водителей")
+Rel(api, pricing, "Маршрутизирует запросы цен")
+Rel(api, payments, "Маршрутизирует платёжные запросы")
+Rel(api, payouts, "Маршрутизирует запросы выплат")
+
+Rel(booking, driver_svc, "Назначение водителя")
+Rel(booking, pricing, "Запрос цены")
+Rel(booking, payments, "Инициирование оплаты")
+Rel(booking, geography, "Геопоиск и маршрут")
+Rel(booking, fraud, "Проверка бронирования")
+Rel(booking, notification, "Инициирование уведомлений")
+Rel(driver_svc, pricing, "Расчёт заработка")
+Rel(payments, fraud, "Проверка транзакций")
+Rel(payouts, driver_svc, "Получение данных водителя")
+Rel(geography, driver_svc, "Получение данных водителей для геопоиска; механизм уточняется")
+
+Rel(booking, booking_db, "Владеет данными")
+Rel(driver_svc, driver_db, "Владеет данными")
+Rel(pricing, pricing_db, "Владеет данными")
+Rel(payments, payments_db, "Владеет данными")
+Rel(payouts, payouts_db, "Владеет данными")
+Rel(notification, notification_db, "Владеет данными")
+Rel(geography, geography_db, "Владеет данными и индексом")
+Rel(fraud, fraud_db, "Владеет данными")
+
+Rel(booking, broker, "Публикует события поездок")
+Rel(payments, broker, "Публикует события платежей")
+Rel(payouts, broker, "Обменивается задачами и событиями выплат")
+Rel(notification, broker, "Получает задачи уведомлений")
+Rel(geography, broker, "Публикует аналитические события")
+Rel(analytics, broker, "Получает события для аналитики")
+Rel(analytics, analytics_engine, "Передаёт данные для обработки")
+Rel(analytics_engine, analytics_db, "Записывает результаты")
+Rel(datalens, analytics_db, "Читает данные для отчётов")
+
+Rel(payments, pay_provider, "Обрабатывает платежи")
+Rel(geography, maps_provider, "Получает картографические данные")
+Rel(notification, push_provider, "Отправляет уведомления")
+Rel(payouts, bank, "Выполняет выплаты")
+
+Rel(booking, observability, "Метрики и логи")
+Rel(driver_svc, observability, "Метрики и логи")
+Rel(pricing, observability, "Метрики и логи")
+Rel(payments, observability, "Метрики и логи")
+Rel(payouts, observability, "Метрики и логи")
+Rel(notification, observability, "Метрики и логи")
+Rel(geography, observability, "Метрики и логи")
+Rel(fraud, observability, "Метрики и логи")
+Rel(analytics, observability, "Метрики и логи")
+Rel(api, observability, "Метрики и логи")
+
+note bottom of platform
+  Целевое состояние после декомпозиции, не схема миграции.
+  Хранилища показывают логическое владение данными, а не обязательно отдельные серверы.
+  Технологии выбраны на основе текущего стека; детали API, доставки событий
+  и регионального размещения требуют проектирования.
+end note
+
+@enduml
