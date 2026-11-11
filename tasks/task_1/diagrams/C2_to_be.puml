@@ -1,5 +1,5 @@
 @startuml GoFuture_C2_To_Be
-!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+!include <C4/C4_Container>
 
 LAYOUT_WITH_LEGEND()
 title GoFuture — целевая архитектура (C4, уровень C2)
@@ -27,6 +27,12 @@ System_Boundary(platform, "GoFuture Platform") {
     Container(geography, "Geography Service", "Python / Django", "Геопоиск и маршруты")
     Container(fraud, "Fraud Service", "Python / Django", "Проверки на мошенничество")
     Container(analytics, "Analytics Service", "Python / Django", "Приём и подготовка аналитических данных")
+
+    Container_Boundary(transition, "Переходный контур: до завершения миграции") {
+        Container(acl, "ACL", "Anti-Corruption Layer", "Адаптирует контракты выделенных сервисов и монолита")
+        Container(monolith, "Django-монолит", "Python / Django", "Ещё не выделенные функции и legacy-маршруты")
+        ContainerDb(monolith_db, "Общая БД монолита", "PostgreSQL", "Данные legacy-функций")
+    }
 
     ContainerDb(booking_db, "Данные Booking", "PostgreSQL", "Бронирования и поездки")
     ContainerDb(driver_db, "Данные Driver", "PostgreSQL", "Данные водителей")
@@ -66,6 +72,7 @@ Rel(api, driver_svc, "Маршрутизирует запросы водител
 Rel(api, pricing, "Маршрутизирует запросы цен")
 Rel(api, payments, "Маршрутизирует платёжные запросы")
 Rel(api, payouts, "Маршрутизирует запросы выплат")
+Rel(api, monolith, "Неперенесённые API и возврат трафика", "Флаг маршрута")
 
 Rel(booking, driver_svc, "Назначение водителя")
 Rel(booking, pricing, "Запрос цены")
@@ -77,6 +84,10 @@ Rel(driver_svc, pricing, "Расчёт заработка")
 Rel(payments, fraud, "Проверка транзакций")
 Rel(payouts, driver_svc, "Получение данных водителя")
 Rel(geography, driver_svc, "Получение данных водителей для геопоиска; механизм уточняется")
+Rel(booking, acl, "Переходные обращения к legacy-функциям")
+Rel(geography, acl, "Переходные обращения к legacy-функциям")
+Rel(acl, monolith, "Адаптирует вызовы к legacy API")
+Rel(monolith, monolith_db, "Читает и изменяет данные")
 
 Rel(booking, booking_db, "Владеет данными")
 Rel(driver_svc, driver_db, "Владеет данными")
@@ -113,11 +124,15 @@ Rel(geography, observability, "Метрики и логи")
 Rel(fraud, observability, "Метрики и логи")
 Rel(analytics, observability, "Метрики и логи")
 Rel(api, observability, "Метрики и логи")
+Rel(acl, observability, "Метрики и логи перехода")
+Rel(monolith, observability, "Метрики и логи legacy-функций")
 
 note bottom of platform
   Целевая роль Kafka для событий; RabbitMQ показан для существующих задач на время перехода.
   Решение о долгосрочном использовании RabbitMQ или переносе задач принимается отдельно.
   Хранилища показывают логическое владение данными, а не обязательно отдельные серверы.
+  На время миграции Kong по флагу маршрута направляет запрос в новый сервис или в монолит.
+  ACL изолирует модель выделенного сервиса от legacy API; прямой доступ к общей БД монолита не допускается.
   Технологии выбраны на основе текущего стека; детали API, доставки событий
   и регионального размещения требуют проектирования.
 end note
