@@ -1,0 +1,81 @@
+@startuml GoFuture_C2_Multitenant_Runtime
+!include <C4/C4_Container>
+
+LAYOUT_WITH_LEGEND()
+skinparam backgroundColor white
+title GoFuture — мультитенантный рабочий контур (C4, C2)
+
+Person(passenger_driver, "Пассажир и водитель", "Заказывает поездки или принимает заказы")
+Person(partner_operator, "Оператор партнёра", "Работает с поездками и заказами партнёра")
+Person(partner_admin, "Администратор партнёра", "Управляет пользователями и настройками")
+Person(sre, "SRE", "Наблюдает техническое состояние")
+System_Ext(partner_idp, "Система входа партнёра", "Корпоративный OIDC / SAML")
+
+System_Boundary(platform, "GoFuture Platform") {
+    Container(mobile_apps, "Мобильные приложения GoFuture", "iOS / Android", "Приложения пассажира и водителя; функции и брендирование tenant")
+    Container(portal, "Портал партнёра", "Web", "Рабочее место оператора и администратора партнёра")
+    Container(iam, "IAM и SSO", "Keycloak", "Управление правами, единый вход и отдельный realm каждого tenant")
+    Container(api, "API Gateway", "Kong", "Проверяет токен и передаёт доверенный контекст tenant")
+    Container(registry, "Реестр партнёров", "БД управляющего контура", "Tenant, регион, ресурсы и статус")
+    Container(config, "Настройки партнёра и флаги функций", "Сервис конфигурации", "Модули, правила, интеграции и брендирование")
+
+    Container_Boundary(services, "Общие сервисы приложения") {
+        Container(booking, "Booking", "Python / Django", "Заказы и поездки")
+        Container(driver, "Driver", "Python / Django", "Водители и назначения")
+        Container(pricing, "Pricing", "Python / Django", "Цены и правила")
+        Container(payments, "Payments", "Python / Django", "Платёжные операции")
+        Container(fraud, "Fraud", "Python / Django", "Проверка риска")
+    }
+
+    Container_Boundary(kafka_cluster, "Общий Kafka-кластер") {
+        Container(kafka_tenant_a, "Ресурсы Kafka tenant A", "Топики и consumer group", "tenant-a.*; доступ только учётным записям tenant A")
+        Container(kafka_tenant_b, "Ресурсы Kafka tenant B", "Топики и consumer group", "tenant-b.*; доступ только учётным записям tenant B")
+    }
+
+    ContainerDb(tenant_a_db, "БД партнёра A", "PostgreSQL + ключ KMS A", "Данные только tenant A")
+    ContainerDb(tenant_b_db, "БД партнёра B", "PostgreSQL + ключ KMS B", "Данные только tenant B")
+    ContainerDb(tenant_storage, "Хранилище партнёров", "Папки object storage", "Отдельная папка и политика доступа на tenant")
+
+    Container(observability, "Наблюдаемость", "Prometheus / Grafana / Loki / Alertmanager", "Метрики и логи по tenant без ПДн")
+    Container(audit, "Неизменяемый аудит", "Журнал аудита", "IAM, конфигурация, подключение и технические учётные записи")
+}
+
+Rel(passenger_driver, mobile_apps, "Пользуется")
+Rel(partner_operator, portal, "Работает с заказами и поездками")
+Rel(partner_admin, portal, "Администрирует своего партнёра")
+Rel(mobile_apps, iam, "Аутентификация", "OIDC")
+Rel(portal, iam, "Аутентификация", "OIDC")
+Rel(iam, partner_idp, "Федерация", "OIDC / SAML")
+Rel(mobile_apps, api, "API-запрос", "HTTPS")
+Rel(portal, api, "API-запрос", "HTTPS")
+Rel(api, iam, "Проверяет источник, получателя и роли токена")
+Rel(api, registry, "Определяет tenant и ресурсы")
+Rel(api, booking, "Передаёт доверенный контекст tenant")
+Rel(api, driver, "Передаёт доверенный контекст tenant")
+Rel(api, pricing, "Передаёт доверенный контекст tenant")
+Rel(api, payments, "Передаёт доверенный контекст tenant")
+Rel(api, fraud, "Передаёт доверенный контекст tenant")
+Rel(services, config, "Читает конфигурацию и флаги")
+Rel(services, iam, "Получают технические учётные данные tenant", "SASL/OAuth или mTLS")
+Rel(booking, tenant_a_db, "Доступ только tenant A")
+Rel(booking, tenant_b_db, "Доступ только tenant B")
+Rel(driver, tenant_a_db, "Доступ только tenant A")
+Rel(pricing, tenant_b_db, "Доступ только tenant B")
+Rel(payments, tenant_a_db, "Доступ только tenant A")
+Rel(services, kafka_tenant_a, "Учётная запись tenant A; доступ только к tenant-a.*", "Kafka проверяет ACL")
+Rel(services, kafka_tenant_b, "Учётная запись tenant B; доступ только к tenant-b.*", "Kafka проверяет ACL")
+Rel(services, tenant_storage, "Доступ по правилам tenant")
+Rel(services, observability, "Метрики, логи и трассировки")
+Rel(iam, audit, "Аудит входа и прав")
+Rel(config, audit, "Аудит изменений")
+Rel(sre, observability, "Наблюдает доступность и ошибки")
+
+note bottom of platform
+  tenant_id берётся из проверенного токена и реестра партнёров,
+  а не из клиентского параметра. БД, ключи KMS, правила доступа Kafka
+  и папки object storage создаются отдельно для каждого партнёра.
+  IAM подтверждает личность сервиса, но не выдаёт права Kafka.
+  Kafka сопоставляет учётную запись с ACL топика и consumer group.
+  Поле tenant_id внутри сообщения не используется для проверки доступа.
+end note
+@enduml
