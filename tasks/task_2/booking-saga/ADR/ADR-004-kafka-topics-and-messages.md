@@ -7,6 +7,7 @@
 
 - [ADR-001: выбор саги](ADR-001-saga-pattern-selection.md) — асинхронная Parallel Saga и требования к надёжности.
 - [ADR-002: шаги саги заказа](ADR-002-booking-saga-steps.md) — предварительные операции заказа и компенсации.
+- [ADR-006: состояния и переходы](ADR-006-saga-transitions.md) — состояния саги и условия переходов.
 - [ADR-003: команды и события](ADR-003-commands-and-events.md) — каталог сообщений, их отправители и получатели.
 - [ADR-005: мониторинг](ADR-005-monitoring.md) — наблюдение за Kafka и DLQ, логи и передача контекста трассировки.
 - [Размещение оркестратора](ADR-orchestrator-placement.md) — предварительное решение о выделенном сервисе-оркестраторе.
@@ -37,13 +38,17 @@ gofuture.<контекст>.events.<издатель>.v<версия>
 | `gofuture.booking.commands.pricing.v1` | Оркестратор | Pricing | `CalculateBookingPrice` |
 | `gofuture.booking.commands.fraud.v1` | Оркестратор | Fraud | `CheckBookingFraud` |
 | `gofuture.booking.commands.driver.v1` | Оркестратор | Driver | `AssignDriver`, `ReleaseDriver` |
-| `gofuture.booking.events.booking.v1` | Booking | Оркестратор, Notification | `BookingCreated`, `BookingConfirmed`, `BookingCancelled` |
+| `gofuture.booking.commands.payments.v1` | Оркестратор | Payments | `ChargeTrip`, `CheckTripPaymentStatus` |
+| `gofuture.booking.events.booking.v1` | Booking | Оркестратор, Notification | `BookingCreated`, `BookingConfirmed`, `BookingCancelled`, `TripCompleted`, `TripPaymentResultRecorded` |
 | `gofuture.booking.events.geography.v1` | Geography | Оркестратор | Результаты проверки зоны и поиска водителей |
 | `gofuture.booking.events.pricing.v1` | Pricing | Оркестратор | Результаты расчёта стоимости |
 | `gofuture.booking.events.fraud.v1` | Fraud | Оркестратор | Результаты проверки заказа |
 | `gofuture.booking.events.driver.v1` | Driver | Оркестратор | Результаты назначения и освобождения водителя |
+| `gofuture.booking.events.payments.v1` | Payments | Оркестратор | `TripPaymentSucceeded`, `TripPaymentFailed`, `TripPaymentStatusUnknown` |
 
 Notification и оркестратор обрабатывают события независимо, в отдельных группах потребителей; подписка Notification на итоговые события пока требует согласования. Для каждого топика нужно настроить права записи и чтения. Отдельный топик на каждый тип сообщения не требуется, но может быть рассмотрен, если у сообщений окажутся разные требования к доступу, нагрузке или сроку хранения.
+
+Итоговый расчёт передаётся через существующие топики Pricing (`CalculateFinalTripPrice` и результаты), запись платёжного статуса — через топики Booking (`RecordTripPaymentResult` и `TripPaymentResultRecorded`). Платёжные топики входят в контекст этой саги; операции выплат и возврата после завершённой оплаты не включены.
 
 ## Партиционирование по регионам
 
