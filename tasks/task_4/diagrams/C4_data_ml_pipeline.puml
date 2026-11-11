@@ -1,0 +1,82 @@
+@startuml GoFuture_C4_Data_ML_Pipeline
+!include <C4/C4_Container>
+
+LAYOUT_WITH_LEGEND()
+skinparam backgroundColor white
+title GoFuture — единый пайплайн данных, ML и BI (C4, C2)
+
+Person(data_engineer, "Data-инженер", "Поддерживает данные и обучение моделей")
+Person(analyst, "Аналитик", "Работает с отчётами")
+
+System_Boundary(platform, "GoFuture Platform") {
+    Container_Boundary(sources, "Доменные источники событий") {
+        Container(booking, "Booking", "Python / Django", "Бронирования и поездки")
+        Container(driver, "Driver", "Python / Django", "Состояние водителей")
+        Container(pricing, "Pricing", "Python / Django", "Расчёт цены")
+        Container(payments, "Payments", "Python / Django", "Платёжные операции")
+        Container(payouts, "Payouts", "Python / Django", "Выплаты")
+        Container(notification, "Notification", "Python / Django", "Уведомления")
+        Container(geography, "Geography", "Python / Django", "Зоны и маршруты")
+        Container(fraud, "Fraud", "Python / Django", "Проверки мошенничества")
+        Container(analytics, "Analytics", "Python / Django", "Аналитические события")
+    }
+
+    Container(outbox, "Transactional outbox", "Таблицы сервисов", "Событие записывается вместе с бизнес-изменением")
+    Container(kafka, "Потоки событий", "Apache Kafka", "Доменные и аналитические события")
+    Container(schema_registry, "Schema Registry", "Реестр схем", "Версии и совместимость сообщений")
+    Container(ingestion, "Приём данных", "Kafka Connect", "Сохраняет неизменяемые исходные события")
+    ContainerDb(raw, "Raw data lake", "Object storage", "Исходные события с сохранёнными метаданными")
+    Container(quality, "Проверки качества", "Spark / Great Expectations", "Схема, полнота, свежесть, диапазоны и дубли")
+    Container(spark, "Преобразование данных", "Apache Spark", "Очистка, дедупликация, витрины и признаки")
+    ContainerDb(curated, "Curated data lake", "Object storage", "Проверенные нормализованные наборы данных")
+    ContainerDb(clickhouse, "Аналитическое хранилище", "ClickHouse", "Витрины для отчётов")
+    Container(datalens, "BI", "DataLens", "Отчёты и исследование данных")
+
+    Container(airflow, "Оркестратор ML-пайплайнов", "Apache Airflow", "Ежедневно запускает проверки, признаки и обучение")
+    Container(feature_store, "Feature store", "Offline + online store", "Единые признаки для обучения и инференса")
+    Container(trainer, "Обучение моделей", "Spark / Python", "Спрос, цена и antifraud")
+    Container(mlflow, "Реестр моделей", "MLflow", "Эксперименты, метрики и одобренные версии")
+    Container(serving, "Сервис онлайн-инференса", "Model serving API", "Выдаёт предсказания Pricing и Fraud")
+}
+
+Rel(booking, outbox, "Записывает событие")
+Rel(driver, outbox, "Записывает событие")
+Rel(pricing, outbox, "Записывает событие")
+Rel(payments, outbox, "Записывает событие")
+Rel(payouts, outbox, "Записывает событие")
+Rel(notification, outbox, "Записывает событие")
+Rel(geography, outbox, "Записывает событие")
+Rel(fraud, outbox, "Записывает событие")
+Rel(analytics, outbox, "Записывает событие")
+Rel(outbox, kafka, "Публикует события", "Kafka")
+Rel(schema_registry, kafka, "Проверяет схемы и совместимость")
+Rel(kafka, ingestion, "Читает события")
+Rel(ingestion, raw, "Записывает raw")
+Rel(raw, quality, "Исходные данные")
+Rel(quality, spark, "Только прошедшие проверки")
+Rel(spark, curated, "Записывает curated и признаки")
+Rel(spark, clickhouse, "Записывает витрины")
+Rel(datalens, clickhouse, "Читает отчёты")
+Rel(analyst, datalens, "Использует")
+
+Rel(airflow, quality, "Раз в сутки запускает проверки")
+Rel(airflow, spark, "Запускает построение признаков")
+Rel(curated, feature_store, "Offline-признаки")
+Rel(feature_store, trainer, "Предоставляет признаки обучения")
+Rel(airflow, trainer, "Ежедневно запускает обучение")
+Rel(trainer, mlflow, "Регистрирует метрики и версию")
+Rel(mlflow, serving, "Публикует одобренную модель")
+Rel(feature_store, serving, "Online-признаки")
+Rel(pricing, serving, "Онлайн-инференс цены", "HTTPS")
+Rel(fraud, serving, "Онлайн-инференс риска", "HTTPS")
+Rel(feature_store, pricing, "Прогноз спроса", "API / cache")
+Rel(feature_store, geography, "Прогноз спроса по зонам", "API / cache")
+Rel(data_engineer, airflow, "Поддерживает DAG и проверки")
+Rel(data_engineer, mlflow, "Проверяет эксперименты и выпуск")
+
+note bottom of platform
+  Airflow запускает пакетное обучение раз в сутки.
+  Онлайн-инференс не записывает напрямую в Booking или Payments;
+  итоговое бизнес-решение и аудит остаются у сервиса-владельца.
+end note
+@enduml
