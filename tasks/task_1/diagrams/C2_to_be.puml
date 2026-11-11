@@ -42,8 +42,10 @@ System_Boundary(platform, "GoFuture Platform") {
     ContainerDb(notification_db, "Данные Notification", "PostgreSQL", "Данные уведомлений и устройств")
     ContainerDb(geography_db, "Данные Geography", "PostgreSQL / Elasticsearch / Redis", "Геоданные, поисковый индекс и кеш")
     ContainerDb(fraud_db, "Данные Fraud", "PostgreSQL", "Данные проверок мошенничества")
-    ContainerQueue(kafka, "Потоки событий", "Apache Kafka", "Доменные и аналитические события; CDC рассматривается")
-    ContainerQueue(rabbit, "Очередь задач", "RabbitMQ / AMQP", "Существующие Celery-задачи на переходный период")
+    ContainerDb(outbox, "Transactional outbox", "PostgreSQL tables per publisher", "Локальные записи исходящих событий; логически показаны одной группой")
+    Container(outbox_relay, "Outbox relay", "Debezium Outbox Event Router", "Читает WAL и публикует outbox-записи в Kafka")
+    Container(kafka, "Потоки событий", "Apache Kafka", "Доменные и аналитические события; CDC рассматривается")
+    Container(rabbit, "Очередь задач", "RabbitMQ / AMQP", "Существующие Celery-задачи на переходный период")
 
     Container(analytics_engine, "Analytics Engine", "Spark / Flink", "Обработка аналитических данных")
     ContainerDb(analytics_db, "Аналитическое хранилище", "ClickHouse", "Данные для аналитики")
@@ -98,12 +100,14 @@ Rel(notification, notification_db, "Владеет данными")
 Rel(geography, geography_db, "Владеет данными и индексом")
 Rel(fraud, fraud_db, "Владеет данными")
 
-Rel(booking, kafka, "Публикует события поездок")
-Rel(payments, kafka, "Публикует события платежей")
-Rel(payouts, kafka, "Публикует события выплат")
+Rel(booking, outbox, "В одной транзакции записывает событие поездки")
+Rel(payments, outbox, "В одной транзакции записывает событие платежа")
+Rel(payouts, outbox, "В одной транзакции записывает событие выплаты")
 Rel(payouts, rabbit, "Обменивается задачами выплат", "Celery / AMQP")
 Rel(notification, rabbit, "Получает задачи уведомлений", "Celery / AMQP")
-Rel(geography, kafka, "Публикует аналитические события")
+Rel(geography, outbox, "В одной транзакции записывает аналитическое событие")
+Rel(outbox, outbox_relay, "Передаёт записи через WAL")
+Rel(outbox_relay, kafka, "Публикует события", "Kafka")
 Rel(analytics, kafka, "Получает события для аналитики")
 Rel(analytics, analytics_engine, "Передаёт данные для обработки")
 Rel(analytics_engine, analytics_db, "Записывает результаты")
@@ -128,6 +132,9 @@ Rel(acl, observability, "Метрики и логи перехода")
 Rel(monolith, observability, "Метрики и логи legacy-функций")
 
 note bottom of platform
+  Сервис-издатель сохраняет бизнес-изменение и строку outbox одной транзакцией PostgreSQL.
+  Debezium Outbox Event Router публикует запись в Kafka; показан один логический outbox,
+  хотя физически таблица принадлежит каждому сервису-издателю.
   Целевая роль Kafka для событий; RabbitMQ показан для существующих задач на время перехода.
   Решение о долгосрочном использовании RabbitMQ или переносе задач принимается отдельно.
   Хранилища показывают логическое владение данными, а не обязательно отдельные серверы.

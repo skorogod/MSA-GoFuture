@@ -20,9 +20,10 @@ System_Boundary(platform, "GoFuture Platform") {
     }
 
     Container_Boundary(messaging, "Событийная платформа") {
-        ContainerQueue(kafka, "Команды и события", "Apache Kafka", "Топики саги; Kafka key — UUID региона")
-        ContainerQueue(dlq, "DLQ", "Kafka topics", "Ошибки обработки по группам потребителей")
-        ContainerQueue(rabbit, "Очередь задач", "RabbitMQ / Celery", "Существующие задачи на переходный период")
+        Container(outbox_relay, "Outbox relay", "Debezium Outbox Event Router", "Читает WAL и публикует записи transactional outbox")
+        Container(kafka, "Команды и события", "Apache Kafka", "Топики саги; Kafka key — UUID региона")
+        Container(dlq, "DLQ", "Kafka topics", "Ошибки обработки по группам потребителей")
+        Container(rabbit, "Очередь задач", "RabbitMQ / Celery", "Существующие задачи на переходный период")
     }
 
     Container_Boundary(services, "Доменные сервисы — участники саги") {
@@ -33,6 +34,7 @@ System_Boundary(platform, "GoFuture Platform") {
         Container(fraud, "Fraud Service", "Python / Django / confluent-kafka-python", "Проверка заказа")
         Container(payments, "Payments Service", "Python / Django / confluent-kafka-python", "Окончательная оплата поездки")
         Container(notification, "Notification Service", "Python / Django / confluent-kafka-python", "Уведомления по событиям поездки")
+        ContainerDb(outbox, "Transactional outbox", "PostgreSQL tables per publisher", "Локальная запись результата и исходящего события одной транзакцией")
     }
 
     Container_Boundary(transition, "Переходный контур: пока функции остаются в монолите") {
@@ -64,14 +66,24 @@ Rel(api, booking, "Маршрутизирует запросы заказа")
 
 Rel(camunda, zeebe_storage, "Сохраняет рабочее состояние")
 Rel(camunda, camunda_search, "Экспортирует данные для поиска")
-BiRel(adapter, camunda, "Получает задания и передаёт результаты")
-BiRel(adapter, kafka, "Публикует команды и читает результаты")
-BiRel(booking, kafka, "Публикует события; получает команды")
-BiRel(geography, kafka, "Получает команды; публикует результаты")
-BiRel(pricing, kafka, "Получает команды; публикует результаты")
-BiRel(driver_service, kafka, "Получает команды; публикует результаты")
-BiRel(fraud, kafka, "Получает команды; публикует результаты")
-BiRel(payments, kafka, "Получает команды; публикует результаты")
+Rel(camunda, adapter, "Передаёт задания")
+Rel(adapter, camunda, "Передаёт результаты")
+Rel(adapter, kafka, "Публикует команды")
+Rel(kafka, adapter, "Передаёт результаты")
+Rel(kafka, booking, "Передаёт команды")
+Rel(kafka, geography, "Передаёт команды")
+Rel(kafka, pricing, "Передаёт команды")
+Rel(kafka, driver_service, "Передаёт команды")
+Rel(kafka, fraud, "Передаёт команды")
+Rel(kafka, payments, "Передаёт команды")
+Rel(booking, outbox, "Фиксирует результат и событие")
+Rel(geography, outbox, "Фиксирует результат и событие")
+Rel(pricing, outbox, "Фиксирует результат и событие")
+Rel(driver_service, outbox, "Фиксирует результат и событие")
+Rel(fraud, outbox, "Фиксирует результат и событие")
+Rel(payments, outbox, "Фиксирует результат и событие")
+Rel(outbox, outbox_relay, "Передаёт записи через WAL")
+Rel(outbox_relay, kafka, "Публикует результаты", "Kafka")
 Rel(kafka, notification, "Итоговые события; подписка уточняется")
 Rel(notification, rabbit, "Получает существующие задачи", "Celery / AMQP")
 Rel(kafka, dlq, "Необработанные сообщения через потребителей")
@@ -110,6 +122,8 @@ note bottom of platform
   Участники саги и переходный контур показаны вместе для пояснения миграции;
   одна функция обрабатывается монолитом или сервисом согласно этапу перехода.
   Состояние Zeebe и вторичное хранилище Camunda различаются; технологии и размещение уточняются.
+  Outbox показан логически: физическая таблица существует в PostgreSQL каждого сервиса-издателя.
+  Debezium публикует исходящие результаты; механизм восстановления границы Camunda / Kafka проектируется отдельно.
   Потоки телеметрии от границ групп обозначают все соответствующие компоненты группы.
 end note
 @enduml
