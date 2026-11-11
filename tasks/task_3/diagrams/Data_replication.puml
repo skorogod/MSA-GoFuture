@@ -1,0 +1,37 @@
+@startuml GoFuture_Data_Replication
+!include <C4/C4_Container>
+LAYOUT_WITH_LEGEND()
+skinparam backgroundColor white
+skinparam database<<new>> {
+  BackgroundColor #FFE6E6
+  BorderColor #CC0000
+  FontColor #990000
+}
+title GoFuture — репликация данных и событий
+
+System_Boundary(apac, "ЮВА: Сингапур ↔ Джакарта") {
+ ContainerDb(sg, "Основные данные Сингапура", "PostgreSQL HA / Kafka", "Владелец записей SG; синхронная HA между зонами")
+ ContainerDb(jk, "Основные данные Джакарты", "PostgreSQL HA / Kafka", "Владелец записей ID; синхронная HA между зонами")
+ database "==DR-копия Сингапура\n//[Encrypted PostgreSQL / mirrored Kafka]//\n\nРезерв Джакарты; не принимает запись" <<new>> as sg_dr
+ database "==DR-копия Джакарты\n//[Encrypted PostgreSQL / mirrored Kafka]//\n\nРезерв Сингапура; не принимает запись" <<new>> as jk_dr
+}
+System_Boundary(latam, "Южная Америка: Сан-Паулу ↔ Сантьяго") {
+ ContainerDb(sp, "Основные данные Сан-Паулу", "PostgreSQL HA / Kafka", "Владелец записей BR; синхронная HA между зонами")
+ ContainerDb(sc, "Основные данные Сантьяго", "PostgreSQL HA / Kafka", "Владелец записей CL; синхронная HA между зонами")
+ database "==DR-копия Сан-Паулу\n//[Encrypted PostgreSQL / mirrored Kafka]//\n\nРезерв Сантьяго; не принимает запись" <<new>> as sp_dr
+ database "==DR-копия Сантьяго\n//[Encrypted PostgreSQL / mirrored Kafka]//\n\nРезерв Сан-Паулу; не принимает запись" <<new>> as sc_dr
+}
+Container(analytics, "Аналитический контур", "Object storage / ClickHouse", "Только агрегированные или обезличенные данные")
+Rel(jk, sg_dr, "Асинхронная DR-репликация; RPO ≤ 5 мин")
+Rel(sg, jk_dr, "Асинхронная DR-репликация; RPO ≤ 5 мин")
+Rel(sc, sp_dr, "Асинхронная DR-репликация; RPO ≤ 5 мин")
+Rel(sp, sc_dr, "Асинхронная DR-репликация; RPO ≤ 5 мин")
+Rel(sg, analytics, "Обезличенные события")
+Rel(jk, analytics, "Обезличенные события")
+Rel(sp, analytics, "Обезличенные события")
+Rel(sc, analytics, "Обезличенные события")
+note bottom
+  DR-копии зашифрованы; ключи остаются у региона-владельца.
+  Promotion возможен только после fencing старого владельца и подтверждения инцидента.
+end note
+@enduml
