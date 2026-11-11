@@ -1,5 +1,5 @@
 @startuml GoFuture_C2_Event_Driven
-!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+!include <C4/C4_Container>
 
 LAYOUT_WITH_LEGEND()
 skinparam backgroundColor white
@@ -25,14 +25,14 @@ System_Boundary(platform, "GoFuture Platform") {
         ContainerQueue(rabbit, "Очередь задач", "RabbitMQ / Celery", "Существующие задачи на переходный период")
     }
 
-    Container_Boundary(services, "Участники саги") {
+    Container_Boundary(services, "Доменные сервисы — участники саги") {
         Container(booking, "Booking Service", "Python / Django / confluent-kafka-python", "Бронирования и статус поездки")
         Container(geography, "Geography Service", "Python / Django / confluent-kafka-python", "Зоны, маршруты и геопоиск")
         Container(pricing, "Pricing Service", "Python / Django / confluent-kafka-python", "Предварительная и итоговая стоимость")
         Container(driver_service, "Driver Service", "Python / Django / confluent-kafka-python", "Назначение водителя")
         Container(fraud, "Fraud Service", "Python / Django / confluent-kafka-python", "Проверка заказа")
         Container(payments, "Payments Service", "Python / Django / confluent-kafka-python", "Окончательная оплата поездки")
-        Container(notification, "Notification Service", "Python / Django", "Уведомления; Kafka-подписка уточняется")
+        Container(notification, "Notification Service", "Python / Django / confluent-kafka-python", "Уведомления по событиям поездки")
     }
 
     Container_Boundary(transition, "Переходный контур: пока функции остаются в монолите") {
@@ -106,6 +106,7 @@ Rel(alertmanager, sre, "Уведомляет об инцидентах")
 Rel(sre, grafana, "Наблюдает за платформой")
 
 note bottom of platform
+  Это частная C2-схема процесса заказа и оплаты; полный состав платформы показан в C2 задачи 1.
   Участники саги и переходный контур показаны вместе для пояснения миграции;
   одна функция обрабатывается монолитом или сервисом согласно этапу перехода.
   Состояние Zeebe и вторичное хранилище Camunda различаются; технологии и размещение уточняются.
