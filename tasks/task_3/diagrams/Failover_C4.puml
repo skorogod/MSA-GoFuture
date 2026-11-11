@@ -1,0 +1,51 @@
+@startuml GoFuture_Failover_C4
+!include <C4/C4_Container>
+LAYOUT_WITH_LEGEND()
+skinparam backgroundColor white
+skinparam rectangle<<new>> {
+  BackgroundColor #FFE6E6
+  BorderColor #CC0000
+  FontColor #990000
+}
+skinparam database<<new>> {
+  BackgroundColor #FFE6E6
+  BorderColor #CC0000
+  FontColor #990000
+}
+title GoFuture — аварийное переключение ЮВА (C4, C2)
+Person(user, "Пользователь", "Пассажир или водитель")
+Person(sre, "SRE", "Подтверждает DR и выполняет runbook")
+rectangle "==Global DNS / Traffic Manager\n//[Anycast + dual DNS]//\n\nПроверяет регион и меняет маршрут" <<new>> as dns
+Container(obs, "Наблюдаемость", "SLO / probes / alerting", "Фиксирует отказ и lag")
+System_Boundary(primary, "Сингапур — регион-владелец") {
+ Container(sg_ingress, "Ingress + Kong", "API Gateway", "Точка входа")
+ Container(sg_services, "Критичные сервисы", "Booking / Driver / Payments / Saga", "Обрабатывают owner region_id")
+ ContainerDb(sg_db, "PostgreSQL HA", "Multi-AZ", "Источник истины")
+ Container(sg_kafka, "Kafka", "Multi-AZ", "Команды и события")
+}
+System_Boundary(dr, "Джакарта — тёплый DR") {
+ Container(jk_ingress, "Ingress + Kong", "API Gateway", "Принимает трафик после promotion")
+ Container(jk_services, "Критичные сервисы", "Warm standby", "Масштабируются при DR")
+ database "==Зашифрованная DR-копия\n//[PostgreSQL replica]//\n\nPromotion после fencing" <<new>> as jk_db
+ rectangle "==Kafka mirror\n//[Mirrored topics]//\n\nЗапуск потребителей после promotion" <<new>> as jk_kafka
+}
+Rel(user, dns, "HTTPS")
+Rel(dns, sg_ingress, "Нормальный маршрут")
+Rel(sg_ingress, sg_services, "API")
+Rel(sg_services, sg_db, "Запись")
+Rel(sg_services, sg_kafka, "События")
+Rel(sg_db, jk_db, "Async encrypted replication; RPO ≤ 5 мин")
+Rel(sg_kafka, jk_kafka, "Mirror обязательных топиков")
+Rel(obs, dns, "Нездоровый Сингапур → исключить")
+Rel(obs, sre, "Алерт + lag")
+Rel(sre, jk_db, "1. Fence SG; 2. approve; 3. promote")
+Rel(sre, jk_services, "4. Масштабировать и запустить потребителей")
+Rel(dns, jk_ingress, "5. DR-маршрут")
+Rel(jk_ingress, jk_services, "API")
+Rel(jk_services, jk_db, "Запись после promotion")
+Rel(jk_services, jk_kafka, "Команды и события")
+note bottom
+  Основные точки отказа: глобальный DNS, edge, регион, PostgreSQL и Kafka.
+  Dual DNS, multi-AZ и fencing устраняют единичный отказ и split-brain.
+end note
+@enduml

@@ -1,5 +1,5 @@
 @startuml GoFuture_C2_To_Be
-!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+!include <C4/C4_Container>
 
 LAYOUT_WITH_LEGEND()
 title GoFuture — целевая архитектура (C4, уровень C2)
@@ -28,6 +28,12 @@ System_Boundary(platform, "GoFuture Platform") {
     Container(fraud, "Fraud Service", "Python / Django", "Проверки на мошенничество")
     Container(analytics, "Analytics Service", "Python / Django", "Приём и подготовка аналитических данных")
 
+    Container_Boundary(transition, "Переходный контур: до завершения миграции") {
+        Container(acl, "ACL", "Anti-Corruption Layer", "Адаптирует контракты выделенных сервисов и монолита")
+        Container(monolith, "Django-монолит", "Python / Django", "Ещё не выделенные функции и legacy-маршруты")
+        ContainerDb(monolith_db, "Общая БД монолита", "PostgreSQL", "Данные legacy-функций")
+    }
+
     ContainerDb(booking_db, "Данные Booking", "PostgreSQL", "Бронирования и поездки")
     ContainerDb(driver_db, "Данные Driver", "PostgreSQL", "Данные водителей")
     ContainerDb(pricing_db, "Данные Pricing", "PostgreSQL", "Ценовые правила")
@@ -36,8 +42,10 @@ System_Boundary(platform, "GoFuture Platform") {
     ContainerDb(notification_db, "Данные Notification", "PostgreSQL", "Данные уведомлений и устройств")
     ContainerDb(geography_db, "Данные Geography", "PostgreSQL / Elasticsearch / Redis", "Геоданные, поисковый индекс и кеш")
     ContainerDb(fraud_db, "Данные Fraud", "PostgreSQL", "Данные проверок мошенничества")
-    ContainerQueue(kafka, "Потоки событий", "Apache Kafka", "Доменные и аналитические события; CDC рассматривается")
-    ContainerQueue(rabbit, "Очередь задач", "RabbitMQ / AMQP", "Существующие Celery-задачи на переходный период")
+    ContainerDb(outbox, "Transactional outbox", "PostgreSQL tables per publisher", "Локальные записи исходящих событий; логически показаны одной группой")
+    Container(outbox_relay, "Outbox relay", "Debezium Outbox Event Router", "Читает WAL и публикует outbox-записи в Kafka")
+    Container(kafka, "Потоки событий", "Apache Kafka", "Доменные и аналитические события; CDC рассматривается")
+    Container(rabbit, "Очередь задач", "RabbitMQ / AMQP", "Существующие Celery-задачи на переходный период")
 
     Container(analytics_engine, "Analytics Engine", "Spark / Flink", "Обработка аналитических данных")
     ContainerDb(analytics_db, "Аналитическое хранилище", "ClickHouse", "Данные для аналитики")
@@ -66,6 +74,7 @@ Rel(api, driver_svc, "Маршрутизирует запросы водител
 Rel(api, pricing, "Маршрутизирует запросы цен")
 Rel(api, payments, "Маршрутизирует платёжные запросы")
 Rel(api, payouts, "Маршрутизирует запросы выплат")
+Rel(api, monolith, "Неперенесённые API и возврат трафика", "Флаг маршрута")
 
 Rel(booking, driver_svc, "Назначение водителя")
 Rel(booking, pricing, "Запрос цены")
@@ -77,6 +86,10 @@ Rel(driver_svc, pricing, "Расчёт заработка")
 Rel(payments, fraud, "Проверка транзакций")
 Rel(payouts, driver_svc, "Получение данных водителя")
 Rel(geography, driver_svc, "Получение данных водителей для геопоиска; механизм уточняется")
+Rel(booking, acl, "Переходные обращения к legacy-функциям")
+Rel(geography, acl, "Переходные обращения к legacy-функциям")
+Rel(acl, monolith, "Адаптирует вызовы к legacy API")
+Rel(monolith, monolith_db, "Читает и изменяет данные")
 
 Rel(booking, booking_db, "Владеет данными")
 Rel(driver_svc, driver_db, "Владеет данными")
@@ -87,12 +100,14 @@ Rel(notification, notification_db, "Владеет данными")
 Rel(geography, geography_db, "Владеет данными и индексом")
 Rel(fraud, fraud_db, "Владеет данными")
 
-Rel(booking, kafka, "Публикует события поездок")
-Rel(payments, kafka, "Публикует события платежей")
-Rel(payouts, kafka, "Публикует события выплат")
+Rel(booking, outbox, "В одной транзакции записывает событие поездки")
+Rel(payments, outbox, "В одной транзакции записывает событие платежа")
+Rel(payouts, outbox, "В одной транзакции записывает событие выплаты")
 Rel(payouts, rabbit, "Обменивается задачами выплат", "Celery / AMQP")
 Rel(notification, rabbit, "Получает задачи уведомлений", "Celery / AMQP")
-Rel(geography, kafka, "Публикует аналитические события")
+Rel(geography, outbox, "В одной транзакции записывает аналитическое событие")
+Rel(outbox, outbox_relay, "Передаёт записи через WAL")
+Rel(outbox_relay, kafka, "Публикует события", "Kafka")
 Rel(analytics, kafka, "Получает события для аналитики")
 Rel(analytics, analytics_engine, "Передаёт данные для обработки")
 Rel(analytics_engine, analytics_db, "Записывает результаты")
@@ -113,11 +128,18 @@ Rel(geography, observability, "Метрики и логи")
 Rel(fraud, observability, "Метрики и логи")
 Rel(analytics, observability, "Метрики и логи")
 Rel(api, observability, "Метрики и логи")
+Rel(acl, observability, "Метрики и логи перехода")
+Rel(monolith, observability, "Метрики и логи legacy-функций")
 
 note bottom of platform
+  Сервис-издатель сохраняет бизнес-изменение и строку outbox одной транзакцией PostgreSQL.
+  Debezium Outbox Event Router публикует запись в Kafka; показан один логический outbox,
+  хотя физически таблица принадлежит каждому сервису-издателю.
   Целевая роль Kafka для событий; RabbitMQ показан для существующих задач на время перехода.
   Решение о долгосрочном использовании RabbitMQ или переносе задач принимается отдельно.
   Хранилища показывают логическое владение данными, а не обязательно отдельные серверы.
+  На время миграции Kong по флагу маршрута направляет запрос в новый сервис или в монолит.
+  ACL изолирует модель выделенного сервиса от legacy API; прямой доступ к общей БД монолита не допускается.
   Технологии выбраны на основе текущего стека; детали API, доставки событий
   и регионального размещения требуют проектирования.
 end note

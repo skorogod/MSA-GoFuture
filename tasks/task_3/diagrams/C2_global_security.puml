@@ -1,0 +1,91 @@
+@startuml GoFuture_C2_Global_Security
+!include <C4/C4_Container>
+LAYOUT_WITH_LEGEND()
+skinparam backgroundColor white
+skinparam rectangle<<new>> {
+  BackgroundColor #FFE6E6
+  BorderColor #CC0000
+  FontColor #990000
+}
+title GoFuture — глобальный защищённый ландшафт (C4, C2)
+
+Person(passenger, "Пассажир / водитель", "Клиент мобильного приложения")
+Person(sre, "SRE", "Управляет инцидентами")
+System_Ext(partners, "Платёжные, карты и push", "Локальные внешние провайдеры")
+
+System_Boundary(global, "GoFuture Global Platform") {
+  rectangle "==Global DNS / Traffic Manager\n//[Anycast + health checks]//\n\nВыбирает ближайший здоровый хаб" <<new>> as dns
+  rectangle "==DDoS protection и WAF\n//[Edge security]//\n\nЗащита L3-L7, rate limit и фильтрация" <<new>> as ddos
+  rectangle "==Реестр владельца поездки\n//[Глобально реплицируемый KV]//\n\nbooking_id → region_id; без ПДн" <<new>> as registry
+  rectangle "==IAM, KMS и Secrets Manager\n//[Identity / key management]//\n\nНаименьшие привилегии, ключи и секреты" <<new>> as iam
+  rectangle "==Неизменяемый аудит\n//[Security audit log]//\n\nДоступ, DR и изменения политик" <<new>> as audit
+  Container(monitoring, "Наблюдаемость", "Prometheus / Grafana / Alertmanager", "SLO и аварийные алерты")
+
+  Container_Boundary(singapore, "Сингапур — основной хаб ЮВА") {
+    rectangle "==Regional ingress + Kong\n//[Ingress / API Gateway]//\n\nВходной API" <<new>> as sg_edge
+    Container(sg_services, "Доменные сервисы", "Booking, Driver, Pricing, Payments, Geography, Fraud", "Горизонтально масштабируемые экземпляры")
+    ContainerDb(sg_db, "Региональные данные", "PostgreSQL HA", "ПДн и транзакции региона")
+    Container(sg_kafka, "Региональные события", "Kafka", "Саги и доменные события")
+    rectangle "==Egress firewall\n//[Network policy]//\n\nКонтролируемый выход к провайдерам" <<new>> as sg_egress
+  }
+  Container_Boundary(jakarta, "Джакарта — DR / основной хаб ЮВА") {
+    rectangle "==Regional ingress + Kong\n//[Ingress / API Gateway]//\n\nВходной API" <<new>> as jk_edge
+    Container(jk_services, "Доменные сервисы", "Booking, Driver, Pricing, Payments, Geography, Fraud", "Горизонтально масштабируемые экземпляры")
+    ContainerDb(jk_db, "Региональные данные", "PostgreSQL HA", "ПДн и транзакции региона")
+    Container(jk_kafka, "Региональные события", "Kafka", "Саги и доменные события")
+    rectangle "==Egress firewall\n//[Network policy]//\n\nКонтролируемый выход к провайдерам" <<new>> as jk_egress
+  }
+  Container_Boundary(saopaulo, "Сан-Паулу — основной хаб Южной Америки") {
+    rectangle "==Regional ingress + Kong\n//[Ingress / API Gateway]//\n\nВходной API" <<new>> as sp_edge
+    Container(sp_services, "Доменные сервисы", "Booking, Driver, Pricing, Payments, Geography, Fraud", "Горизонтально масштабируемые экземпляры")
+    ContainerDb(sp_db, "Региональные данные", "PostgreSQL HA", "ПДн и транзакции региона")
+    Container(sp_kafka, "Региональные события", "Kafka", "Саги и доменные события")
+    rectangle "==Egress firewall\n//[Network policy]//\n\nКонтролируемый выход к провайдерам" <<new>> as sp_egress
+  }
+  Container_Boundary(santiago, "Сантьяго — DR / основной хаб Южной Америки") {
+    rectangle "==Regional ingress + Kong\n//[Ingress / API Gateway]//\n\nВходной API" <<new>> as sc_edge
+    Container(sc_services, "Доменные сервисы", "Booking, Driver, Pricing, Payments, Geography, Fraud", "Горизонтально масштабируемые экземпляры")
+    ContainerDb(sc_db, "Региональные данные", "PostgreSQL HA", "ПДн и транзакции региона")
+    Container(sc_kafka, "Региональные события", "Kafka", "Саги и доменные события")
+    rectangle "==Egress firewall\n//[Network policy]//\n\nКонтролируемый выход к провайдерам" <<new>> as sc_egress
+  }
+}
+
+Rel(passenger, dns, "HTTPS")
+Rel(dns, ddos, "Направляет к здоровому хабу")
+Rel(ddos, sg_edge, "Трафик ЮВА")
+Rel(ddos, jk_edge, "Трафик ЮВА")
+Rel(ddos, sp_edge, "Трафик Южной Америки")
+Rel(ddos, sc_edge, "Трафик Южной Америки")
+Rel(sg_edge, sg_services, "Маршрутизирует")
+Rel(jk_edge, jk_services, "Маршрутизирует")
+Rel(sp_edge, sp_services, "Маршрутизирует")
+Rel(sc_edge, sc_services, "Маршрутизирует")
+Rel(sg_services, sg_db, "Читает и пишет")
+Rel(jk_services, jk_db, "Читает и пишет")
+Rel(sp_services, sp_db, "Читает и пишет")
+Rel(sc_services, sc_db, "Читает и пишет")
+Rel(sg_services, sg_kafka, "Публикует / читает")
+Rel(jk_services, jk_kafka, "Публикует / читает")
+Rel(sp_services, sp_kafka, "Публикует / читает")
+Rel(sc_services, sc_kafka, "Публикует / читает")
+Rel(sg_edge, registry, "Находит region_id")
+Rel(jk_edge, registry, "Находит region_id")
+Rel(sp_edge, registry, "Находит region_id")
+Rel(sc_edge, registry, "Находит region_id")
+Rel(sg_services, iam, "mTLS, роли, секреты")
+Rel(jk_services, iam, "mTLS, роли, секреты")
+Rel(sp_services, iam, "mTLS, роли, секреты")
+Rel(sc_services, iam, "mTLS, роли, секреты")
+Rel(sg_egress, partners, "TLS к локальным провайдерам")
+Rel(jk_egress, partners, "TLS к локальным провайдерам")
+Rel(sp_egress, partners, "TLS к локальным провайдерам")
+Rel(sc_egress, partners, "TLS к локальным провайдерам")
+Rel(iam, audit, "Аудитирует доступ")
+Rel(dns, monitoring, "Health checks")
+Rel(monitoring, sre, "Алерты")
+note bottom of global
+  Красным показаны изменения относительно целевой C2 задачи 1.
+  Каждый хаб active-active для входа; запись принадлежит одному region_id.
+end note
+@enduml

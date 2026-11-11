@@ -1,0 +1,39 @@
+@startuml GoFuture_C2_Partner_Onboarding
+!include <C4/C4_Container>
+
+LAYOUT_WITH_LEGEND()
+skinparam backgroundColor white
+title GoFuture — автоматическое подключение партнёра (C4, C2)
+
+Person(platform_admin, "Администратор платформы", "Создаёт и активирует заявку партнёра")
+Person(partner_admin, "Администратор партнёра", "Передаёт SSO-параметры и получает доступ")
+System_Ext(partner_idp, "Система входа партнёра", "Корпоративный OIDC / SAML")
+
+System_Boundary(platform, "GoFuture Platform") {
+    Container(portal, "Портал партнёра", "Web", "Создание заявки и просмотр статуса")
+    Container(onboarding, "Сервис подключения партнёра", "Workflow / API", "Создаёт ресурсы, проверяет их и меняет статус партнёра")
+    Container(registry, "Реестр партнёров", "БД управляющего контура", "Статус, регион, ресурсы, модули, интеграции и брендирование tenant")
+    Container(iam, "IAM и SSO", "Keycloak", "Создаёт realm, роли, приложение-клиент, связь с системой входа и технические учётные записи")
+    Container(kafka_admin, "Настройка Kafka", "Kafka Admin API", "Создаёт tenant-*-топики, consumer group и Kafka ACL для сервисных учётных записей")
+    ContainerDb(tenant_db, "База tenant", "PostgreSQL + ключ KMS", "Создаётся, мигрируется и проверяется")
+    ContainerDb(storage, "Хранилище tenant", "Папка object storage", "Отдельная папка и политика доступа")
+}
+
+Rel(platform_admin, portal, "Создаёт заявку")
+Rel(partner_admin, portal, "Передаёт параметры SSO")
+Rel(portal, onboarding, "Создаёт заявку партнёра")
+Rel(onboarding, registry, "1. Создаёт tenant: ПОДГОТАВЛИВАЕТСЯ")
+Rel(onboarding, iam, "2. Создаёт realm, роли, SSO и учётные данные сервисов")
+Rel(iam, partner_idp, "Настраивает федерацию", "OIDC / SAML")
+Rel(onboarding, tenant_db, "3. Создаёт БД, ключ KMS; применяет миграции и проверяет доступ")
+Rel(onboarding, storage, "4. Создаёт папку и правило доступа")
+Rel(onboarding, kafka_admin, "5. Создаёт tenant-*-топики и consumer group; назначает и проверяет ACL")
+Rel(onboarding, registry, "6. Успех: АКТИВЕН; ошибка: ОШИБКА")
+Rel(portal, partner_admin, "Направляет статус и инструкцию SSO")
+
+note bottom of platform
+  «Подготавливается»: ресурсы ещё создаются, трафик закрыт.
+  «Активен»: все проверки прошли. «Ошибка»: доступ не выдаётся.
+  Повторный запуск безопасно создаёт только недостающие ресурсы.
+end note
+@enduml

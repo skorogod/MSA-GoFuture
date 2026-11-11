@@ -1,0 +1,34 @@
+@startuml GoFuture_Geo_Routing
+!include <C4/C4_Container>
+LAYOUT_WITH_LEGEND()
+skinparam backgroundColor white
+skinparam rectangle<<new>> {
+  BackgroundColor #FFE6E6
+  BorderColor #CC0000
+  FontColor #990000
+}
+title GoFuture — геомаршрутизация пользователей
+Person(user, "Пассажир или водитель", "Мобильное приложение")
+rectangle "==Global DNS / Traffic Manager\n//[Anycast, geo-DNS]//\n\nВыбирает ближайший здоровый хаб" <<new>> as dns
+rectangle "==DDoS + WAF\n//[Edge]//\n\nПроверяет и ограничивает запрос" <<new>> as waf
+rectangle "==Реестр region_id\n//[Global KV]//\n\nbooking_id → регион-владелец" <<new>> as registry
+rectangle "==Маршрутизатор владельца поездки\n//[Kong route]//\n\nВыбирает региональный ingress по region_id" <<new>> as owner_router
+Container(nearest_ingress, "Ближайший региональный ingress", "Kong", "Сингапур / Джакарта / Сан-Паулу / Сантьяго")
+Container(owner_ingress, "Ingress региона-владельца", "Kong", "Выбирается по region_id")
+Container(owner_booking, "Booking региона-владельца", "Booking Service", "Обрабатывает активную поездку")
+Rel(user, dns, "Новый запрос: nearest healthy")
+Rel(dns, waf, "Выбор хаба по latency + health")
+Rel(waf, nearest_ingress, "Направляет в ближайший из 4 хабов")
+Rel(nearest_ingress, registry, "Повторный запрос: найти region_id")
+Rel(registry, owner_router, "Возвращает region_id")
+Rel(owner_router, owner_ingress, "Выбирает ingress владельца")
+Rel(owner_ingress, owner_booking, "Передаёт запрос владельцу")
+note bottom of registry
+  Новый Booking получает region_id по зоне подачи.
+  Повторный запрос проходит: ближайший ingress → реестр → маршрутизатор владельца → ingress региона-владельца.
+end note
+note bottom of nearest_ingress
+  Новый запрос обслуживает ближайший здоровый хаб.
+  region_id Сингапура, Джакарты, Сан-Паулу или Сантьяго определяет владельца активной поездки.
+end note
+@enduml

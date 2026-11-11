@@ -1,0 +1,129 @@
+@startuml GoFuture_C2_Event_Driven
+!include <C4/C4_Container>
+
+LAYOUT_WITH_LEGEND()
+skinparam backgroundColor white
+title GoFuture — событийная архитектура саги заказа и оплаты (C4, уровень C2)
+
+Person(passenger, "Пассажир", "Заказывает и оплачивает поездку")
+Person(sre, "SRE / команда сопровождения", "Наблюдает за платформой и реагирует на инциденты")
+
+System_Boundary(platform, "GoFuture Platform") {
+    Container(passenger_app, "Приложение пассажира", "iOS / Android / Huawei", "Создание и отслеживание заказа")
+    Container(api, "API Gateway", "Kong", "Маршрутизация клиентских запросов")
+
+    Container_Boundary(orchestration, "Оркестрация саги") {
+        Container(camunda, "Оркестратор заказа", "Camunda 8 Self-Managed / Zeebe / BPMN", "Состояние, ожидания и компенсации")
+        Container(adapter, "Kafka-адаптер", "Worker / коннектор; уточняется", "Команды и результаты между Camunda и Kafka")
+        ContainerDb(zeebe_storage, "Рабочее состояние Zeebe", "Постоянное хранилище", "Состояние процессов и ожиданий")
+        ContainerDb(camunda_search, "Поиск процессов Camunda", "Elasticsearch / OpenSearch; выбор уточняется", "Вторичное хранилище для просмотра процессов")
+    }
+
+    Container_Boundary(messaging, "Событийная платформа") {
+        Container(outbox_relay, "Outbox relay", "Debezium Outbox Event Router", "Читает WAL и публикует записи transactional outbox")
+        Container(kafka, "Команды и события", "Apache Kafka", "Топики саги; Kafka key — UUID региона")
+        Container(dlq, "DLQ", "Kafka topics", "Ошибки обработки по группам потребителей")
+        Container(rabbit, "Очередь задач", "RabbitMQ / Celery", "Существующие задачи на переходный период")
+    }
+
+    Container_Boundary(services, "Доменные сервисы — участники саги") {
+        Container(booking, "Booking Service", "Python / Django / confluent-kafka-python", "Бронирования и статус поездки")
+        Container(geography, "Geography Service", "Python / Django / confluent-kafka-python", "Зоны, маршруты и геопоиск")
+        Container(pricing, "Pricing Service", "Python / Django / confluent-kafka-python", "Предварительная и итоговая стоимость")
+        Container(driver_service, "Driver Service", "Python / Django / confluent-kafka-python", "Назначение водителя")
+        Container(fraud, "Fraud Service", "Python / Django / confluent-kafka-python", "Проверка заказа")
+        Container(payments, "Payments Service", "Python / Django / confluent-kafka-python", "Окончательная оплата поездки")
+        Container(notification, "Notification Service", "Python / Django / confluent-kafka-python", "Уведомления по событиям поездки")
+        ContainerDb(outbox, "Transactional outbox", "PostgreSQL tables per publisher", "Локальная запись результата и исходящего события одной транзакцией")
+    }
+
+    Container_Boundary(transition, "Переходный контур: пока функции остаются в монолите") {
+        Container(acl, "ACL", "Anti-Corruption Layer", "Адаптация команд и результатов монолита")
+        Container(monolith, "Django-монолит", "Python / Django", "Ещё не выделенные функции")
+        ContainerDb(monolith_db, "Общая БД монолита", "PostgreSQL", "Данные legacy-функций")
+    }
+
+    Container_Boundary(observability, "Наблюдаемость") {
+        Container(prometheus, "Prometheus", "Prometheus / TSDB", "Сбор и хранение метрик")
+        Container(alertmanager, "Alertmanager", "Alertmanager", "Группировка и доставка алертов")
+        Container(alloy, "Grafana Alloy", "Grafana Alloy", "Сбор и передача логов")
+        Container(loki, "Loki", "Grafana Loki", "Приём и поиск логов")
+        ContainerDb(log_storage, "Хранилище логов", "Yandex Object Storage", "Логи и индекс Loki")
+        Container(otel, "OpenTelemetry", "SDK / Collector при необходимости", "Формирование и передача трассировок")
+        Container(jaeger, "Jaeger", "Jaeger", "Приём и поиск трассировок")
+        ContainerDb(trace_storage, "Хранилище трассировок", "Elasticsearch", "Отдельный кластер для Jaeger")
+        Container(grafana, "Grafana", "Grafana", "Дашборды, логи и трассировки")
+    }
+}
+
+System_Ext(maps, "Картографические провайдеры", "Яндекс Карты и локальные сервисы")
+System_Ext(pay_provider, "Платёжные провайдеры", "Яндекс Пэй и локальные платёжные сервисы")
+System_Ext(push_provider, "Push-провайдеры", "FCM, APNs и Huawei Push Kit")
+
+Rel(passenger, passenger_app, "Использует")
+Rel(passenger_app, api, "Заказывает и отслеживает поездку", "HTTPS")
+Rel(api, booking, "Маршрутизирует запросы заказа")
+
+Rel(camunda, zeebe_storage, "Сохраняет рабочее состояние")
+Rel(camunda, camunda_search, "Экспортирует данные для поиска")
+Rel(camunda, adapter, "Передаёт задания")
+Rel(adapter, camunda, "Передаёт результаты")
+Rel(adapter, kafka, "Публикует команды")
+Rel(kafka, adapter, "Передаёт результаты")
+Rel(kafka, booking, "Передаёт команды")
+Rel(kafka, geography, "Передаёт команды")
+Rel(kafka, pricing, "Передаёт команды")
+Rel(kafka, driver_service, "Передаёт команды")
+Rel(kafka, fraud, "Передаёт команды")
+Rel(kafka, payments, "Передаёт команды")
+Rel(booking, outbox, "Фиксирует результат и событие")
+Rel(geography, outbox, "Фиксирует результат и событие")
+Rel(pricing, outbox, "Фиксирует результат и событие")
+Rel(driver_service, outbox, "Фиксирует результат и событие")
+Rel(fraud, outbox, "Фиксирует результат и событие")
+Rel(payments, outbox, "Фиксирует результат и событие")
+Rel(outbox, outbox_relay, "Передаёт записи через WAL")
+Rel(outbox_relay, kafka, "Публикует результаты", "Kafka")
+Rel(kafka, notification, "Итоговые события; подписка уточняется")
+Rel(notification, rabbit, "Получает существующие задачи", "Celery / AMQP")
+Rel(kafka, dlq, "Необработанные сообщения через потребителей")
+Rel(kafka, acl, "Команды legacy-функциям через адаптер; механизм уточняется")
+Rel(acl, monolith, "Адаптирует вызовы к legacy API")
+Rel(acl, kafka, "Публикует результаты; механизм уточняется")
+Rel(monolith, monolith_db, "Читает и изменяет данные")
+Rel(geography, maps, "Получает картографические данные")
+Rel(payments, pay_provider, "Проводит и проверяет оплату")
+Rel(notification, push_provider, "Отправляет уведомления")
+
+Rel(services, prometheus, "Метрики сервисов и потребителей")
+Rel(camunda, prometheus, "Метрики процесса и Zeebe")
+Rel(adapter, prometheus, "Метрики адаптера")
+Rel(kafka, prometheus, "Метрики брокера и потребителей; через экспортёры")
+Rel(acl, prometheus, "Метрики переходного контура")
+Rel(services, alloy, "Структурированные логи")
+Rel(orchestration, alloy, "Логи оркестратора и адаптера")
+Rel(acl, alloy, "Логи ACL")
+Rel(alloy, loki, "Передаёт логи")
+Rel(loki, log_storage, "Хранит логи и индекс")
+Rel(services, otel, "Контекст и spans")
+Rel(orchestration, otel, "Трассировки процесса и адаптера")
+Rel(acl, otel, "Трассировки ACL")
+Rel(otel, jaeger, "Передаёт трассировки", "OTLP")
+Rel(jaeger, trace_storage, "Хранит трассировки")
+Rel(grafana, prometheus, "Читает метрики")
+Rel(grafana, loki, "Читает логи")
+Rel(grafana, jaeger, "Читает трассировки")
+Rel(prometheus, alertmanager, "Передаёт алерты")
+Rel(alertmanager, sre, "Уведомляет об инцидентах")
+Rel(sre, grafana, "Наблюдает за платформой")
+
+note bottom of platform
+  Это частная C2-схема процесса заказа и оплаты; полный состав платформы показан в C2 задачи 1.
+  Участники саги и переходный контур показаны вместе для пояснения миграции;
+  одна функция обрабатывается монолитом или сервисом согласно этапу перехода.
+  Состояние Zeebe и вторичное хранилище Camunda различаются; технологии и размещение уточняются.
+  Outbox показан логически: физическая таблица существует в PostgreSQL каждого сервиса-издателя.
+  Debezium публикует исходящие результаты; механизм восстановления границы Camunda / Kafka проектируется отдельно.
+  Потоки телеметрии от границ групп обозначают все соответствующие компоненты группы.
+end note
+@enduml
