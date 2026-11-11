@@ -12,6 +12,7 @@
 - [ADR-005: мониторинг](ADR-005-monitoring.md) — метрики, логи, трассировки и алерты оркестратора и саги.
 - [ADR-006: состояния и переходы](ADR-006-saga-transitions.md) — состояния процесса, которыми управляет оркестратор.
 - [ADR-007: обработчики Kafka](ADR-007-kafka-consumers.md) — Python-потребители и интеграция Camunda с Kafka.
+- [C2 событийной платформы](../diagrams/C2_event_driven.puml) ([PNG](../diagrams/GoFuture_C2_Event_Driven.png)) — оркестратор, участники саги и инструменты наблюдаемости.
 - [Целевая архитектура C2](../../../task_1/diagrams/C2_to_be.puml) — сервисы, которые участвуют в процессе, и их данные.
 - [Kafka и RabbitMQ](../../../task_1/ADR/ADR-003-kafka-rabbitmq-migration.md) — обмен событиями через Kafka и переходная роль RabbitMQ.
 - [Очерёдность выделения сервисов](../../../task_1/ADR/ADR-002-strangler-fig-extraction-priority.md) — порядок перехода и использование ACL для вызовов монолита.
